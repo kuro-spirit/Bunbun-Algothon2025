@@ -1,56 +1,43 @@
-
 import numpy as np
 
-##### TODO #########################################
-### IMPLEMENT 'getMyPosition' FUNCTION #############
-### TO RUN, RUN 'eval.py' ##########################
-
-nInst = 50
-currentPos = np.zeros(nInst)
-prev_signal = np.zeros(nInst)
-
 def getMyPosition(prcSoFar):
-    global currentPos, prev_signal
-    (nins, nt) = prcSoFar.shape
-    if nt < 51:
-        return np.zeros(nins)
+    nInst, nDays = prcSoFar.shape
+    if nDays < 11:
+        return np.zeros(nInst)
+    
+    # 5-day momentum
+    momentum = np.log(prcSoFar[:, -1] / prcSoFar[:, -6])
+    # Rank-based momentum (centered)
+    ranks = np.argsort(np.argsort(momentum))
+    rank_signal = ranks - np.mean(ranks)
 
-    returns = np.log(prcSoFar[:, 1:] / prcSoFar[:, :-1])
 
-    short_window = 5
-    long_window = 50
+    log_returns = np.diff(np.log(prcSoFar[:, -16:]), axis=1)    # Compute daily log returns for last 11 days
+    today_ret = log_returns[:, -1]     # Use last day's return as signal
+    # Use std dev of previous 10 days to assess significance
+    vol = np.std(log_returns[:, :-1], axis=1) + 1e-8  # avoid divide by zero
+    zscore = today_ret / vol     # Compute z-score of today's move
 
-    sma_short = np.mean(prcSoFar[:, -short_window:], axis=1)
-    sma_long = np.mean(prcSoFar[:, -long_window:], axis=1)
+    # Use only instruments with strong breakout
+    signal = rank_signal * np.where(np.abs(zscore) > 3.0, 1, 0)  # only act if breakout is strong
 
-    trend = sma_long - sma_short
-    trend_signal = np.sign(trend)
+    # Keep only top 10 breakout
+    topN = 10
+    strongest = np.argsort(-np.abs(signal))[:topN]
+    filtered_signal = np.zeros_like(signal)
+    filtered_signal[strongest] = signal[strongest]
+    signal = filtered_signal
 
-    vol_long = np.std(returns[:, -long_window:], axis=1)
-    vol_short = np.std(returns[:, -short_window:], axis=1)
-
-    vol_ratio = vol_short / (vol_long + 1e-8)
-    regime = vol_ratio > 1.5  # tighter filter
-
-    raw_signal = trend_signal * regime
-    raw_signal = np.where(np.abs(raw_signal) > 0.1, raw_signal, 0.0)
-
-    # Smooth signal
-    smoothed_signal = 0.7 * prev_signal + 0.3 * raw_signal
-    prev_signal = smoothed_signal
-
-    norm = np.sqrt(np.sum(smoothed_signal ** 2))
-    if norm > 0:
-        signal = smoothed_signal / norm
+    # Normalize
+    norm = np.linalg.norm(signal)
+    if norm > 1e-6:
+        signal /= norm
     else:
-        signal = smoothed_signal
+        return np.zeros(nInst)
 
-    dollar_budget_per_instrument = 800  # slightly lower size
+    # Position sizing
+    prices_today = prcSoFar[:, -1]
+    dollar_target = 150 * signal
+    rpos = dollar_target / prices_today
 
-    newPos = dollar_budget_per_instrument * signal / prcSoFar[:, -1]
-    newPos = np.array([int(x) for x in newPos])
-
-    # Reset position daily to reduce accumulation swings
-    currentPos = newPos
-
-    return currentPos
+    return rpos.astype(int)

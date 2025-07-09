@@ -16,6 +16,9 @@ def getMyPosition(prcSoFar):
     for i in range(nInst):
         price_series = prcSoFar[i, -lookback:]
 
+        if np.std(price_series) / np.mean(price_series) < 0.01:
+            continue  # skip flat instruments
+
         # Step 1: Detect local highs and lows (pivot points)
         highs = []
         lows = []
@@ -50,11 +53,13 @@ def getMyPosition(prcSoFar):
             recent_max = np.max(price_series[-trend_window:])
             recent_min = np.min(price_series[-trend_window:])
 
+            take_profit_pct = 0.10
             stop_long = price_now < recent_max * (1 - stop_pct)
+            take_profit_long = price_now > recent_min * (1 + take_profit_pct)
             stop_short = price_now > recent_min * (1 + stop_pct)
 
             # Step 5: Decide position
-            if uptrend and not stop_long:
+            if uptrend and not stop_long and not take_profit_long:
                 # Long signal
                 dollar_target = dollar_per_signal
                 positions[i] = int(dollar_target / price_now)
@@ -65,3 +70,5 @@ def getMyPosition(prcSoFar):
             else:
                 # No trend or stop condition met: stay flat
                 positions[i] = 0
+
+    return positions

@@ -2,38 +2,73 @@ import numpy as np
 
 def getMyPosition(prcSoFar):
     nInst, nDays = prcSoFar.shape
+    if nDays < 15:
+        return np.zeros(nInst)
+
     positions = np.zeros(nInst)
 
-    # === Fixed Strategy Hyperparameters (Tunable Manually) ===
-    short_ma_window = 4
-    long_ma_window = 12
-    vol_window = 7
-    vol_mult = 0.6
-    base_dollar_per_signal = 25
-
-    max_position = 2
-
-    # === Alpha-Based High Score Strategy ===
-    if nDays < max(short_ma_window, long_ma_window, vol_window) + 1:
-        return positions  # Not enough data yet
+    # Settings
+    lookback = 10     # days to find pivots
+    trend_window = 6  # use last 6 days to detect pivot structure
+    stop_pct = 0.05   # 2% stop-loss approximation
+    dollar_per_signal = 1000  # how big each position is (keep it low to reduce cost)
 
     for i in range(nInst):
-        price_series = prcSoFar[i]
-        price_now = price_series[-1]
+        price_series = prcSoFar[i, -lookback:]
 
-        short_ma = np.mean(price_series[-short_ma_window:])
-        long_ma = np.mean(price_series[-long_ma_window:])
-        recent_volatility = np.max(price_series[-vol_window:]) - np.min(price_series[-vol_window:])
+        if np.std(price_series) / np.mean(price_series) < 0.01:
+            continue  # skip flat instruments
 
-        if recent_volatility == 0:
-            continue  # Skip flat instruments
+        # Step 1: Detect local highs and lows (pivot points)
+        highs = []
+        lows = []
 
-        signal_strength = abs(price_now - short_ma) + abs(price_now - long_ma)
+        for t in range(1, lookback - 1):
+            if price_series[t] > price_series[t - 1] and price_series[t] > price_series[t + 1]:
+                highs.append((t, price_series[t]))
+            if price_series[t] < price_series[t - 1] and price_series[t] < price_series[t + 1]:
+                lows.append((t, price_series[t]))
 
-        if signal_strength > vol_mult * recent_volatility:
-            direction = -1 if price_now > short_ma and price_now > long_ma else 1
-            dollar_per_signal_scaled = base_dollar_per_signal * max_position * (signal_strength / recent_volatility)
-            position = int(dollar_per_signal_scaled / price_now)
-            positions[i] = direction * position
+        # Step 2: Look at the last 2 pivot highs and lows
+        if len(highs) >= 2 and len(lows) >= 2:
+            prev_high = highs[-2][1]
+            last_high = highs[-1][1]
+            prev_low = lows[-2][1]
+            last_low = lows[-1][1]
+
+            # Step 3: Detect uptrend or downtrend
+            uptrend = last_high > prev_high and last_low > prev_low
+            downtrend = last_high < prev_high and last_low < prev_low
+
+            min_trend_strength = 0.03  # % movement required
+            high_change = (last_high - prev_high) / prev_high
+            low_change = (last_low - prev_low) / prev_low
+
+            if high_change < min_trend_strength or low_change < min_trend_strength:
+                continue  # skip this instrument — trend not strong enough
+
+            price_now = price_series[-1]
+
+            # Step 4: Approximate stop-loss: if price dropped too much from recent high/low
+            recent_max = np.max(price_series[-trend_window:])
+            recent_min = np.min(price_series[-trend_window:])
+
+            take_profit_pct = 0.10
+            stop_long = price_now < recent_max * (1 - stop_pct)
+            take_profit_long = price_now > recent_min * (1 + take_profit_pct)
+            stop_short = price_now > recent_min * (1 + stop_pct)
+
+            # Step 5: Decide position
+            if uptrend and not stop_long and not take_profit_long:
+                # Long signal
+                dollar_target = dollar_per_signal
+                positions[i] = int(dollar_target / price_now)
+            elif downtrend and not stop_short:
+                # Short signal
+                dollar_target = dollar_per_signal
+                positions[i] = int(-dollar_target / price_now)
+            else:
+                # No trend or stop condition met: stay flat
+                positions[i] = 0
 
     return positions

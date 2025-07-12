@@ -1,8 +1,6 @@
-#!/usr/bin/env python
-
 import numpy as np
 import pandas as pd
-from aiStrategy import getMyPosition as getPosition
+from HigherHigh import getMyPosition as getPosition
 
 nInst = 0
 nt = 0

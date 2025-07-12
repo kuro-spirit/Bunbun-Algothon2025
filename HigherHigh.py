@@ -8,10 +8,10 @@ def getMyPosition(prcSoFar):
     positions = np.zeros(nInst)
 
     # Settings
-    lookback = 10     # days to find pivots
-    trend_window = 6  # use last 6 days to detect pivot structure
-    stop_pct = 0.05   # 2% stop-loss approximation
-    dollar_per_signal = 1000  # how big each position is (keep it low to reduce cost)
+    lookback = 9      # days to find pivots
+    trend_window = 9  # use last 6 days to detect pivot structure
+    stop_pct = 0.001   # 2% stop-loss approximation
+    dollar_per_signal = 10000  # how big each position is (keep it low to reduce cost)
 
     for i in range(nInst):
         price_series = prcSoFar[i, -lookback:]
@@ -40,7 +40,7 @@ def getMyPosition(prcSoFar):
             uptrend = last_high > prev_high and last_low > prev_low
             downtrend = last_high < prev_high and last_low < prev_low
 
-            min_trend_strength = 0.03  # % movement required
+            min_trend_strength = 0.035  # % movement required
             high_change = (last_high - prev_high) / prev_high
             low_change = (last_low - prev_low) / prev_low
 
@@ -53,13 +53,11 @@ def getMyPosition(prcSoFar):
             recent_max = np.max(price_series[-trend_window:])
             recent_min = np.min(price_series[-trend_window:])
 
-            take_profit_pct = 0.10
             stop_long = price_now < recent_max * (1 - stop_pct)
-            take_profit_long = price_now > recent_min * (1 + take_profit_pct)
             stop_short = price_now > recent_min * (1 + stop_pct)
 
             # Step 5: Decide position
-            if uptrend and not stop_long and not take_profit_long:
+            if uptrend and not stop_long:
                 # Long signal
                 dollar_target = dollar_per_signal
                 positions[i] = int(dollar_target / price_now)

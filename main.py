@@ -2,42 +2,71 @@ import numpy as np
 
 def getMyPosition(prcSoFar):
     nInst, nDays = prcSoFar.shape
-    if nDays < 11:
-        return np.zeros(nInst)
-    
-    # 5-day momentum
-    momentum = np.log(prcSoFar[:, -1] / prcSoFar[:, -6])
-    # Rank-based momentum (centered)
-    ranks = np.argsort(np.argsort(momentum))
-    rank_signal = ranks - np.mean(ranks)
-
-
-    log_returns = np.diff(np.log(prcSoFar[:, -16:]), axis=1)    # Compute daily log returns for last 11 days
-    today_ret = log_returns[:, -1]     # Use last day's return as signal
-    # Use std dev of previous 10 days to assess significance
-    vol = np.std(log_returns[:, :-1], axis=1) + 1e-8  # avoid divide by zero
-    zscore = today_ret / vol     # Compute z-score of today's move
-
-    # Use only instruments with strong breakout
-    signal = rank_signal * np.where(np.abs(zscore) > 3.0, 1, 0)  # only act if breakout is strong
-
-    # Keep only top 10 breakout
-    topN = 10
-    strongest = np.argsort(-np.abs(signal))[:topN]
-    filtered_signal = np.zeros_like(signal)
-    filtered_signal[strongest] = signal[strongest]
-    signal = filtered_signal
-
-    # Normalize
-    norm = np.linalg.norm(signal)
-    if norm > 1e-6:
-        signal /= norm
-    else:
+    if nDays < 15:
         return np.zeros(nInst)
 
-    # Position sizing
-    prices_today = prcSoFar[:, -1]
-    dollar_target = 150 * signal
-    rpos = dollar_target / prices_today
+    positions = np.zeros(nInst)
 
-    return rpos.astype(int)
+    # Settings
+    lookback = 9      # days to find pivots
+    trend_window = 9  # use last 6 days to detect pivot structure
+    stop_pct = 0.001   # 2% stop-loss approximation
+    dollar_per_signal = 10000  # how big each position is (keep it low to reduce cost)
+
+    for i in range(nInst):
+        price_series = prcSoFar[i, -lookback:]
+
+        if np.std(price_series) / np.mean(price_series) < 0.01:
+            continue  # skip flat instruments
+
+        # Step 1: Detect local highs and lows (pivot points)
+        highs = []
+        lows = []
+
+        for t in range(1, lookback - 1):
+            if price_series[t] > price_series[t - 1] and price_series[t] > price_series[t + 1]:
+                highs.append((t, price_series[t]))
+            if price_series[t] < price_series[t - 1] and price_series[t] < price_series[t + 1]:
+                lows.append((t, price_series[t]))
+
+        # Step 2: Look at the last 2 pivot highs and lows
+        if len(highs) >= 2 and len(lows) >= 2:
+            prev_high = highs[-2][1]
+            last_high = highs[-1][1]
+            prev_low = lows[-2][1]
+            last_low = lows[-1][1]
+
+            # Step 3: Detect uptrend or downtrend
+            uptrend = last_high > prev_high and last_low > prev_low
+            downtrend = last_high < prev_high and last_low < prev_low
+
+            min_trend_strength = 0.035  # % movement required
+            high_change = (last_high - prev_high) / prev_high
+            low_change = (last_low - prev_low) / prev_low
+
+            if high_change < min_trend_strength or low_change < min_trend_strength:
+                continue  # skip this instrument — trend not strong enough
+
+            price_now = price_series[-1]
+
+            # Step 4: Approximate stop-loss: if price dropped too much from recent high/low
+            recent_max = np.max(price_series[-trend_window:])
+            recent_min = np.min(price_series[-trend_window:])
+
+            stop_long = price_now < recent_max * (1 - stop_pct)
+            stop_short = price_now > recent_min * (1 + stop_pct)
+
+            # Step 5: Decide position
+            if uptrend and not stop_long:
+                # Long signal
+                dollar_target = dollar_per_signal
+                positions[i] = int(dollar_target / price_now)
+            elif downtrend and not stop_short:
+                # Short signal
+                dollar_target = dollar_per_signal
+                positions[i] = int(-dollar_target / price_now)
+            else:
+                # No trend or stop condition met: stay flat
+                positions[i] = 0
+
+    return positions

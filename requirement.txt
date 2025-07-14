@@ -1,5 +1,0 @@
-Entry file is eval.py.
-
-Dependencies:
-numpy
-pandas
